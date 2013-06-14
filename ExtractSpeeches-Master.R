@@ -12,14 +12,17 @@ library("RWekajars")
 library("Rhetpack")
 
 options(stringsAsFactors = FALSE)
-filenames <- list.files(path="/Users/Paul/Thesis/Sources/House/4/", full.names=TRUE)
+filenames <- list.files(path="/Users/Paul/Thesis/Sources/House/2/", full.names=TRUE)
+
+
 
 # ===== DEFINE FUNCTIONS =====
 
-nodesettoframe <- function(nodeset, hansarddate, nodesettype, breakintoparas=TRUE){
+nodesettoframe <- function(nodeset, hansarddate, nodesettype, breakintoparas=TRUE, filetype="XML"){
   #Define function - receive speeches and convert each para of the speech into a row of a dataframe
   #function receives speeches, which is a node set. subset with [[number]
-  masterframe1 <- data.frame(Speaker = character(),
+  masterframe1 <- data.frame(SpeakerID = character(),
+                             Speaker = character(),
                              Electorate = character(),
                              Party = character(),
                              InGov = character(),
@@ -30,20 +33,34 @@ nodesettoframe <- function(nodeset, hansarddate, nodesettype, breakintoparas=TRU
                              SetType=character(),
                              Paratext = character(),
                              stringsAsFactors=FALSE)
-  nameid <- as.vector(xpathApply(nodeset, "descendant::name.id", xmlValue)) #for XML
-  electorate <- as.vector(xpathApply(nodeset, "descendant::electorate", xmlValue)) #for XML
-  party <- as.vector(xpathApply(nodeset, "descendant::party", xmlValue)) #for XML
-  in.gov <- as.vector(xpathApply(nodeset, "descendant::in.gov", xmlValue)) #for XML
-  role <- as.vector(xpathApply(nodeset, "descendant::role", xmlValue)) #for XML
+  
+  if (filetype=="XML"){
+    name <- as.vector(xpathApply(nodeset, "descendant::name", xmlValue))
+    nameid <- as.vector(xpathApply(nodeset, "descendant::name.id", xmlValue)) #for XML
+    electorate <- as.vector(xpathApply(nodeset, "descendant::electorate", xmlValue)) #for XML
+    party <- as.vector(xpathApply(nodeset, "descendant::party", xmlValue)) #for XML
+    in.gov <- as.vector(xpathApply(nodeset, "descendant::in.gov", xmlValue)) #for XML
+    role <- as.vector(xpathApply(nodeset, "descendant::role", xmlValue)) #for XML
+    paras <- xpathSApply(nodeset, "descendant::para | descendant::p", xmlValue)
+    parentdebate <- try(getNodeSet(nodeset[[1]], "ancestor::debate[1]")[[1]], silent=TRUE) #this returns the debate that parents the node
+    debatetitle <-  try(as.vector(xpathSApply(parentdebate, "descendant::debateinfo//title", xmlValue)), silent=TRUE) #this returns the debate title
+  }else{
+    name <- as.vector(xmlAttrs(nodeset)["speaker"])
+    nameid <- as.vector(xmlAttrs(nodeset)["nameid"]) 
+    electorate <- as.vector(xmlAttrs(nodeset)["electorate"])
+    party <- as.vector(xmlAttrs(nodeset)["party"]) 
+    in.gov <- as.vector(xmlAttrs(nodeset)["gov"]) 
+    role <- as.vector(xmlAttrs(nodeset)["ministerial"]) 
+    paras <- xpathSApply(nodeset, "descendant::para | descendant::p", xmlValue)
+    parentdebate <- try(getNodeSet(nodeset[[1]], "ancestor::debate[1]")[[1]], silent=TRUE) #this returns the debate that parents the node
+    debatetitle <-  try(as.vector(xpathSApply(parentdebate, "descendant::title", xmlValue)), silent=TRUE) #this returns the debate title
+  }
   
   
-  paras <- xpathSApply(nodeset, "descendant::para | descendant::p", xmlValue)
-  
-  parentdebate <- try(getNodeSet(nodeset[[1]], "ancestor::debate[1]")[[1]], silent=TRUE) #this returns the debate that parents the node
-  debatetitle <-  try(as.vector(xpathSApply(parentdebate, "descendant::debateinfo//title", xmlValue)), silent=TRUE) #this returns the debate title
   if (breakintoparas == TRUE) {
     for(para in paras){
       rowvector <- as.character(c(nameid[[1]],
+                                  name[[1]],
                                   electorate[1],
                                   party[1],
                                   in.gov[1],
@@ -56,7 +73,9 @@ nodesettoframe <- function(nodeset, hansarddate, nodesettype, breakintoparas=TRU
       masterframe1[nrow(masterframe1)+1,] <- rowvector
     }
   } else {
+    
     rowvector <- as.character(c(nameid[[1]],
+                                name[[1]],
                                 electorate[1],
                                 party[1],
                                 in.gov[1],
@@ -74,13 +93,20 @@ nodesettoframe <- function(nodeset, hansarddate, nodesettype, breakintoparas=TRU
 
 
 ### PARSE XML FUNCTION ###
-parsexml <- function(filenamepath){  
+parsexml <- function(filenamepath, filetype="XML"){ 
+  
   doc <- xmlInternalTreeParse(filenamepath) #read xml into memory #speeches[[14]] contains "continue" tags
   root <- xmlRoot(doc) #read root of xml
   
   # get all the base element nodesets in the file
   
-  XMLdate <- xpathApply(root, "//date", xmlValue)[[1]] #for XML data
+  if(filetype=="XML"){
+    XMLdate <- xpathApply(root, "//date", xmlValue)[[1]] #for XML data
+  }else{
+    XMLdate <- xpathApply(root, "//hansard/@date")
+  }
+    
+  
   speeches <- getNodeSet(root, "//speech") #get all speeches
   questions <- xpathApply(root,  "//question") #get all questions 
   answers <- xpathApply(root, "//answer") #get all answers
@@ -127,13 +153,18 @@ parsexml <- function(filenamepath){
 
 ### PARSE XML FUNCTION - THIS TIME WITH WHOLE SPEECHES###
 
-parsexmlwholespeeches <- function(filenamepath){  
+parsexmlwholespeeches <- function(filenamepath, filetype="XML"){  
   doc <- xmlInternalTreeParse(filenamepath) #read xml into memory #speeches[[14]] contains "continue" tags
   root <- xmlRoot(doc) #read root of xml
   
   # get all the base element nodesets in the file
   
-  XMLdate <- xpathApply(root, "//date", xmlValue)[[1]] #for XML data
+  if(filetype=="XML"){
+    XMLdate <- xpathApply(root, "//date", xmlValue)[[1]] #for XML data
+  }else{
+    XMLdate <- xpathApply(root, "//hansard/@date")
+  }
+  
   speeches <- getNodeSet(root, "//speech") #get all speeches
   questions <- xpathApply(root,  "//question") #get all questions 
   answers <- xpathApply(root, "//answer") #get all answers
@@ -141,7 +172,7 @@ parsexmlwholespeeches <- function(filenamepath){
   continues <- xpathApply(root, "//continue")
   
   
-  ids <-xpathApply(root, "//speech//name.id", xmlValue)
+  ids <-xpathApply(root, "//speech//name.id", xmlValue) #what's the point of this?
   
   interjections.list <-  list()
   speeches.list <- list()
@@ -152,21 +183,21 @@ parsexmlwholespeeches <- function(filenamepath){
   
   if(xmlSize(speeches)>0){
     for(i in 1:xmlSize(speeches)){
-      speeches.list[[i]] <- nodesettoframe(speeches[[i]], XMLdate, "speech", breakintoparas = FALSE)
+      speeches.list[[i]] <- nodesettoframe(speeches[[i]], XMLdate, "speech", breakintoparas = FALSE, filetype=filetype)
     }
   }
   xpathApply(root, "//speech", removeNodes) #remove nodes we don't want after we've finished with them?
   
   if(xmlSize(questions)>0){
     for(i in 1:xmlSize(questions)){
-      questions.list[[i]] <- nodesettoframe(questions[[i]], XMLdate, "question", breakintoparas = FALSE)
+      questions.list[[i]] <- nodesettoframe(questions[[i]], XMLdate, "question", breakintoparas = FALSE, filetype=filetype)
     }
   }
   xpathApply(root, "//question", removeNodes) #remove nodes we don't want after we've finished with them?
   
   if(xmlSize(answers)>0){
     for(i in 1:xmlSize(answers)){
-      answers.list[[i]] <- nodesettoframe(answers[[i]], XMLdate, "answer", breakintoparas = FALSE)
+      answers.list[[i]] <- nodesettoframe(answers[[i]], XMLdate, "answer", breakintoparas = FALSE, filetype=filetype)
     }
   }
   xpathApply(root, "//answer", removeNodes) #remove nodes we don't want after we've finished with them?
@@ -182,12 +213,13 @@ parsexmlwholespeeches <- function(filenamepath){
 
 
 # ===== CALL THE FUNCTIONS TO CREATE A MASTER DATASET =====
-filestodata <- function(x, y){
+
+filestodata <- function(x, y, filetype="XML"){
   masterframe.list <- list()
   #for(i in 1:length(filenames)){     #  <- this line will loop through all files 
   for(i in x:y){ # <- this line will loop through a selection of files
     print(i)
-    masterframe.list[[i]] <- parsexmlwholespeeches(filenames[[i]])
+    masterframe.list[[i]] <- parsexmlwholespeeches(filenames[[i]], filetype=filetype)
   }
   
   masterframe.df <- do.call("rbind", masterframe.list) # this line binds the list created from all files into one big dataframe
