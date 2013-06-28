@@ -48,6 +48,7 @@ library("RWekajars")
 library("Rhetpack")
 library("zoo")
 library("xts")
+library("R.utils")
 
 options(stringsAsFactors = FALSE)
 
@@ -234,26 +235,92 @@ parsexml <- function(filenamepath, filetype="XML", house="house", breakintoparas
   big.df
 }
 
-tdmfunction <- function(x) {
+create.corpus <- function(filename.master=NULL, block.size=50000, save.corpus=FALSE, save.filename) {
   
-  textcorpus <- Corpus(VectorSource(as.character(speechdata[,"Paratext"])))
-  meta(textcorpus, "speakerid") <- as.character(speechdata[,"SpeakerID"])
-  meta(textcorpus, "party") <- as.character(speechdata[,"Party"])
-  meta(textcorpus, "date") <- as.character(speechdata[,"Date"])
-  meta(textcorpus, "speechid") <- as.integer(speechdata[,"SpeechID"])
-  inspect(textcorpus[120:130])
+  #==== Convert mastlerframe into memory management requires us to break the documents down into blocks of 50,000
+  
+  print("Loading master data")
+  masterframe <- loadObject(filename.master)
+  
+  n.blocks <- ceiling(nrow(masterframe)/block.size)
+  print(paste("Number of blocks", n.blocks))
   
   
+  for (i in 1:n.blocks){
+    
+    if(i!=1){print("Loading master data"); masterframe <- loadObject(filename.master)} #if i=1 the object has already been assigned to masterframe to calculate n.blocks
+    
+    print (paste("Processing corpus block:", i))
+    start <- ((i-1)*block.size)+1
+    if(i*block.size>nrow(masterframe)){
+      end <- nrow(masterframe)
+    }else{
+      end <- i*block.size
+    }
+    
+    print("Subsetting master data")
+    masterframe.block <- masterframe[start:end,]
+    
+    print("Dumping master data")
+    rm(masterframe)
+    
+    print("Creating corpus block")
+    textcorpus.block <- Corpus(VectorSource(as.character(masterframe.block[,"Paratext"])))
+    
+    print("Adding metadata to block")
+    meta(textcorpus.block, "SpeakerID") <- as.character(masterframe.block[,"SpeakerID"])
+    meta(textcorpus.block, "Party") <- as.character(masterframe.block[,"Party"])
+    meta(textcorpus.block, "Date") <- as.character(masterframe.block[,"Date"])
+    meta(textcorpus.block, "SpeechID") <- as.character(masterframe.block[,"SpeechID"])
+    meta(textcorpus.block, "InGov") <- as.character(masterframe.block[,"InGov"])
+    
+    print("Dumping subsetted data frame")
+    rm(masterframe.block)
+    
+    print("Stripping whitespace")
+    textcorpus.block <- tm_map(textcorpus.block, stripWhitespace)
+    print("Converting to lowercase")
+    textcorpus.block <- tm_map(textcorpus.block, tolower)
+    print("Removing punctuation")
+    textcorpus.block <- tm_map(textcorpus.block, removePunctuation)
+    print("Removing numbers")
+    textcorpus.block <- tm_map(textcorpus.block, removeNumbers)
+    print("Removing stopwords")
+    textcorpus.block <- tm_map(textcorpus.block, removeWords, stopwords("english"))
+    print("Stemimng corpus")
+    textcorpus.block <- tm_map(textcorpus.block, stemDocument)
+    
+    
+    save(textcorpus.block, file=paste("/Users/Paul/ThesisData/CorpusBlock-", i, ".RData", sep=""))
+    rm(textcorpus.block)
+    
+  }
   
   
-  textcorpus <- tm_map(textcorpus, stripWhitespace)
-  textcorpus <- tm_map(textcorpus, tolower)
-  textcorpus <- tm_map(textcorpus, removePunctuation)
-  textcorpus <- tm_map(textcorpus, removeNumbers)
-  textcorpus <- tm_map(textcorpus, removeWords, stopwords("english"))
-  textcorpus <- tm_map(textcorpus, stemDocument)
+  #===== Load and reassemble corpus blocks ========
   
-  inspect(textcorpus[120:130])
+  for (i in 1:n.blocks){
+    name <- paste("~/ThesisData/CorpusBlock-", i, ".RData", sep="")
+    print(paste("Loading:", name))
+    textcorpus.block <- loadObject(name)
+    
+    if (i==1){
+      textcorpus <- loadObject(name) #no concatenation required for first iteration
+      next
+    }else{
+      textcorpus.block <- loadObject(name)
+      textcorpus <- c(textcorpus, textcorpus.block) #concatenate block to 'textcorpus'
+    }
+    rm(textcorpus.block) #remove block once it has been added to 'textcorpus' 
+  }
+  
+  if(save.corpus==TRUE){
+    save(textcorpus, file=save.filename)
+  }
+  return(textcorpus)
+}  
+
+createdtm <- function(speechdata){
   
   dtm <- TermDocumentMatrix(textcorpus) #create term document matrix
   colnames(dtm) <- as.character(speechdata[,"SpeakerID"]) #creates columnname vector with speaker ids
@@ -273,6 +340,11 @@ tdmfunction <- function(x) {
   TmpX[1:12, 1:10]
   X3col <- matrix(c(TmpX@i+1, TmpX@j+1, TmpX@x), ncol = 3) # +1 because dgTMatrix starts indexing at 0
   X3col <- X3col[order(X3col[,1], X3col[,2], decreasing=FALSE),] #order dgTMatrix by 1st then 2nd columns, ascending
+  
+}
+
+
+fitmodel <-function(speechdata){
   
   speechdates <- as.Date(speechdata[,"Date"]) #gets speech dates
   speechdates <- as.numeric(speechdates) #converts dates to integers
@@ -297,7 +369,7 @@ tdmfunction <- function(x) {
   
   
   #this one crashes
-    out <- EMDynMultMix(sparsemat, timevec=speechdates, time.names=datenames, kernwidth=20, nclust=40, EMmaxiter=500,
+  out <- EMDynMultMix(sparsemat, timevec=speechdates, time.names=datenames, kernwidth=20, nclust=40, EMmaxiter=500,
                       EMtol=1e-5,
                       priorcount=1.01,
                       lazythresh=1.0, fullEMiter=1, initfullEMiter=1,
@@ -305,32 +377,35 @@ tdmfunction <- function(x) {
                       V00=10)
   
   #this one works
-    out <- EMDynMultMix(sparsemat, timevec=speechdates, time.names=datenames, kernwidth=250, nclust=30, EMmaxiter=100,
+  out <- EMDynMultMix(sparsemat, timevec=speechdates, time.names=datenames, kernwidth=250, nclust=30, EMmaxiter=100,
                       EMtol=1e-5, theta.start=NA, pi.start=NA,
                       clustprobs.start=NA, priorcount=1.0,
                       lazythresh=0.99, fullEMiter=1, initfullEMiter=1,
                       aaa=1.0, bbb=1.0, ccc=1.0, ddd=1.0, C0=100,
                       V00=10)
   #20130623 - current model
-    out <- EMDynMultMix(sparsemat, timevec=speechdates, time.names=datenames, kernwidth=20, nclust=40, EMmaxiter=100,
-                      EMtol=1e-5, theta.start=NA, pi.start=NA,
-                      clustprobs.start=NA, priorcount=1.01,
-                      lazythresh=1.0, fullEMiter=1, initfullEMiter=1,
-                      aaa=1.0, bbb=1.0, ccc=1.0, ddd=1.0, C0=100,
-                      V00=10)
+  model.output <- EMDynMultMix(sparsemat, timevec=speechdates, time.names=datenames, kernwidth=20, nclust=40, EMmaxiter=100,
+                               EMtol=1e-5, theta.start=NA, pi.start=NA,
+                               clustprobs.start=NA, priorcount=1.01,
+                               lazythresh=1.0, fullEMiter=1, initfullEMiter=1,
+                               aaa=1.0, bbb=1.0, ccc=1.0, ddd=1.0, C0=100,
+                               V00=10)
   
-  
+  model.output
+}
+
+analyse.model <- function(model.output){
   topicindex.speeches <- numeric(length=0)
   topicindex.words <- numeric(length=0)
   
-  for(i in 1:nrow(out$z)){
-    topicindex.speeches[i] <- which.max(out$z[i,]) #generate vector of categories for each 
+  for(i in 1:nrow(model.output$z)){
+    topicindex.speeches[i] <- which.max(model.output$z[i,]) #generate vector of categories for each 
   }
   
   speechdata <- cbind(speechdata, topicindex.speeches)
   
-  for(i in 1:nrow(out$beta)){
-    topicindex.words[i] <- which.max(out$beta[i,]) #generate vector of categories for each 
+  for(i in 1:nrow(model.output$beta)){
+    topicindex.words[i] <- which.max(model.output$beta[i,]) #generate vector of categories for each 
   }
   
   
@@ -340,7 +415,7 @@ tdmfunction <- function(x) {
   #=====Generate top 20 words for each category and export to topwords dataframe
   topwords <- list(0)
   for(j in 1:30){
-    topwords[[j]] <- names((out$beta[order(out$beta[,j], decreasing=TRUE),])[1:20,j])
+    topwords[[j]] <- names((model.output$beta[order(model.output$beta[,j], decreasing=TRUE),])[1:20,j])
   }
   topwords <- do.call("cbind", topwords)
   categorynamevector <- character(length=30)
@@ -353,7 +428,7 @@ tdmfunction <- function(x) {
   
   #=====Add n words per document to the speechdata matrix
   
-  speechdata <- cbind(speechdata, out$nwords.perdoc)
+  speechdata <- cbind(speechdata, model.output$nwords.perdoc)
   
   
   #=====Create timeseries object (xts) of a particular category, and then aggregate number of words by day. Create a list of these.
@@ -361,12 +436,12 @@ tdmfunction <- function(x) {
   speechdata.topiclist <- list()
   
   for(i in 1:30){
-  speechdata.topiclist[[i]] <- subset(speechdata, topicindex==i)
-  speechdata.topiclist[[i]] <- speechdata.topiclist[[i]][,c(8,13)]
-  timeseries <- xts(speechdata.topiclist[[i]][,2], as.Date(speechdata.topiclist[[i]][,1]))
-  speechdata.topiclist[[i]] <- aggregate(timeseries, time(timeseries), sum)
+    speechdata.topiclist[[i]] <- subset(speechdata, topicindex==i)
+    speechdata.topiclist[[i]] <- speechdata.topiclist[[i]][,c(8,13)]
+    timeseries <- xts(speechdata.topiclist[[i]][,2], as.Date(speechdata.topiclist[[i]][,1]))
+    speechdata.topiclist[[i]] <- aggregate(timeseries, time(timeseries), sum)
   }
-
+  
   
   
   #findAssocs(sparsedtm, "migrat", 0.1) #find associations between words
