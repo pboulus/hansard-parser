@@ -64,7 +64,7 @@ filenames <- list(list.files(path="/Users/Paul/ThesisData/Sources/House/1/", ful
 
 # ===== DEFINE FUNCTIONS =====
 
-filestodata <- function(filestart=1, filestop, folderstart, folderstop){
+filestodata <- function(filestart=1, filestop=0, folderstart, folderstop){
   
   masterframe.list <- list()
   
@@ -83,16 +83,23 @@ filestodata <- function(filestart=1, filestop, folderstart, folderstop){
       house <- "house"
     }
     
+    
+    if (filestop==0){
+    }else{
+      filestop.loop <- length(filenames[[j]]) #if filestop is not specified as function input, loop through all filenames in the folder
+      filestop.loop <- filestop #if filestop is specified as function input, stop loop at this point
+    }
+    
     #     Loop through each file in the list of filenames  
-    for(i in filestart:length(filenames[[j]])){ # <- this line will loop through a selection of files
+    for(i in filestart:filestop.loop){ # <- this line will loop through a selection of files
       print(i)
       masterframe.list[[length(masterframe.list)+1]] <- parsexml(filenames[[j]][i], filetype=filetype, house=house)
     }
   }
   
   masterframe.df <- do.call("rbind", masterframe.list) # this line binds the list created from all files into one big dataframe
-  SpeechIDs <- c(1:nrow(masterframe.df))
-  masterframe.df <- cbind(SpeechIDs, masterframe.df)
+  SpeechID <- c(1:nrow(masterframe.df))
+  masterframe.df <- cbind(SpeechID, masterframe.df)
   masterframe.df
 }
 
@@ -140,11 +147,18 @@ nodesettoframe <- function(nodeset, hansarddate, nodesettype, breakintoparas=TRU
     if (class(parentdebate) != "try-error"){debatetitle <-  try(xpathSApply(parentdebate, "descendant::title", xmlValue), silent=TRUE)} 
   }
   
+  nameid <- unlist(nameid)
+  
+  #test whether all entries of the nameid vector are 10000 (speaker)
+  if (10000 %in% nameid && !all(nameid==10000)){
+    nameid <- nameid[!nameid==10000] #if not, remove all ids of 10000 (speaker) #not required if we can figure out how to break up the speech
+  }
+  
   #Add data into masterframe1 as rows, either as whole chunks or broken down into paragraphs depending on parameter
   if (breakintoparas == TRUE) {
     for(para in paras){
       rowvector <- as.character(c(nameid[1],
-                                  name[[1]],
+                                  name[1],
                                   electorate[1],
                                   party[1],
                                   in.gov[1],
@@ -157,8 +171,11 @@ nodesettoframe <- function(nodeset, hansarddate, nodesettype, breakintoparas=TRU
       masterframe1[nrow(masterframe1)+1,] <- rowvector
     }
   } else {
+    
+    #What we want to do here is split the speech into x components, where each element of x is the unique speaker ID within each speech
+    
     rowvector <- as.character(c(nameid[1],
-                                name[[1]],
+                                name[1],
                                 electorate[1],
                                 party[1],
                                 in.gov[1],
@@ -187,15 +204,16 @@ parsexml <- function(filenamepath, filetype="XML", house="house", breakintoparas
     XMLdate <- xpathApply(root, "//hansard/@date")
   }
   
+  xpathApply(root, "//interjection", removeNodes) #remove all interjections - noise reduction
+  #xpathApply(root, "//talker[descendant::name.id[text()=10000]]", removeNodes) #remove talker IDs where the speaker is speaking - noise reduction
+  
   
   speeches <- getNodeSet(root, "//speech") #get all speeches
-  questions <- xpathApply(root,  "//question") #get all questions 
-  answers <- xpathApply(root, "//answer") #get all answers
-  interjections <- xpathApply(root, "//interjection") #get all interjections
-  continues <- xpathApply(root, "//continue") #get all continues
+  questions <- getNodeSet(root,  "//question") #get all questions 
+  answers <- getNodeSet(root, "//answer") #get all answers
+  # continues <- xpathApply(root, "//continue") #continues sit within speeches/questions/answers, so there is no need to select them separately
   
-  
-  ids <-xpathApply(root, "//speech//name.id", xmlValue) #what's the point of this?
+  # ids <-xpathApply(root, "//speech//name.id", xmlValue) #what's the point of this?
   
   interjections.list <-  list()
   speeches.list <- list()
@@ -235,7 +253,7 @@ parsexml <- function(filenamepath, filetype="XML", house="house", breakintoparas
   big.df
 }
 
-create.corpus <- function(filename.master=NULL, block.size=50000, save.corpus=FALSE, save.filename) {
+create.tdm <- function(filename.master=NULL, block.size=50000, save.tdm=FALSE, save.filename) {
   
   #==== Convert mastlerframe into memory management requires us to break the documents down into blocks of 50,000
   
@@ -263,15 +281,17 @@ create.corpus <- function(filename.master=NULL, block.size=50000, save.corpus=FA
     
     print("Dumping master data")
     rm(masterframe)
+    gc()
     
     print("Creating corpus block")
     textcorpus.block <- Corpus(VectorSource(as.character(masterframe.block[,"Paratext"])))
+    gc()
     
     print("Adding metadata to block")
     meta(textcorpus.block, "SpeakerID") <- as.character(masterframe.block[,"SpeakerID"])
     meta(textcorpus.block, "Party") <- as.character(masterframe.block[,"Party"])
     meta(textcorpus.block, "Date") <- as.character(masterframe.block[,"Date"])
-    meta(textcorpus.block, "SpeechID") <- as.character(masterframe.block[,"SpeechID"])
+    #meta(textcorpus.block, "SpeechID") <- as.character(masterframe.block[,"SpeechID"])
     meta(textcorpus.block, "InGov") <- as.character(masterframe.block[,"InGov"])
     
     print("Dumping subsetted data frame")
@@ -279,68 +299,87 @@ create.corpus <- function(filename.master=NULL, block.size=50000, save.corpus=FA
     
     print("Stripping whitespace")
     textcorpus.block <- tm_map(textcorpus.block, stripWhitespace)
+    
     print("Converting to lowercase")
     textcorpus.block <- tm_map(textcorpus.block, tolower)
+    
     print("Removing punctuation")
     textcorpus.block <- tm_map(textcorpus.block, removePunctuation)
+    
     print("Removing numbers")
     textcorpus.block <- tm_map(textcorpus.block, removeNumbers)
+    
     print("Removing stopwords")
     textcorpus.block <- tm_map(textcorpus.block, removeWords, stopwords("english"))
+    
     print("Stemimng corpus")
     textcorpus.block <- tm_map(textcorpus.block, stemDocument)
     
+    print("Creating term-document matrix")
+    tdm.block <- TermDocumentMatrix(textcorpus.block) #create term document matrix
     
-    save(textcorpus.block, file=paste("/Users/Paul/ThesisData/CorpusBlock-", i, ".RData", sep=""))
+    print("Adding column names to term-document matrix")
+    #colnames(dtm) <- c(1:length(textcorpus.block)) #creates columnname vector
+    
+    print("Removing corpus block")
     rm(textcorpus.block)
+    gc()
+    
+  
+    #inspect(dtm[1:50, 1:50])
+    #inspect(sparsedtm[1:10, 1:10])
+    
+    print(paste("Number of documents in tdm:", ncol(tdm.block)))
+    print(paste("Number of terms in tdm:", nrow(tdm.block)))
+    
+    saveObject(tdm.block, file=paste("/Users/Paul/ThesisData/TDMBlock-", i, ".RData", sep=""))
     
   }
   
-  
-  #===== Load and reassemble corpus blocks ========
+  #===== Load and reassemble TDM blocks ========
   
   for (i in 1:n.blocks){
-    name <- paste("~/ThesisData/CorpusBlock-", i, ".RData", sep="")
+    name <- paste("/Users/Paul/ThesisData/TDMBlock-", i, ".RData", sep="")
     print(paste("Loading:", name))
-    textcorpus.block <- loadObject(name)
+    tdm.block <- loadObject(name)
     
     if (i==1){
-      textcorpus <- loadObject(name) #no concatenation required for first iteration
+      tdm <- loadObject(name) #no concatenation required for first iteration
       next
     }else{
-      textcorpus.block <- loadObject(name)
-      textcorpus <- c(textcorpus, textcorpus.block) #concatenate block to 'textcorpus'
+      tdm.block <- loadObject(name)
+      tdm <- c(tdm, tdm.block) #concatenate block to 'sparsetdm'
     }
-    rm(textcorpus.block) #remove block once it has been added to 'textcorpus' 
+    rm(tdm.block) #remove block once it has been added to 'sparsetdm' 
+    gc()
   }
   
-  if(save.corpus==TRUE){
-    save(textcorpus, file=save.filename)
+  if(save.tdm==TRUE){
+    saveObject(tdm, file=save.filename)
   }
-  return(textcorpus)
-}  
+  gc() #collect garbage
+  return(tdm)
+}
 
-createdtm <- function(speechdata){
+compress.tdm <- function(tdm){
   
-  dtm <- TermDocumentMatrix(textcorpus) #create term document matrix
-  colnames(dtm) <- as.character(speechdata[,"SpeakerID"]) #creates columnname vector with speaker ids
-  sparsedtm <- removeSparseTerms(dtm, 0.995) #removes sparseness from the matrix
-  inspect(dtm[1:50, 1:50])
-  inspect(sparsedtm[1:10, 1:10])
+  print("Removing sparse terms")
+  sparsetdm <- removeSparseTerms(tdm, 0.995) #removes sparseness from the matrix
   
+  print(paste("Number of documents in sparse tdm:", ncol(sparsetdm)))
+  print(paste("Number of terms in sparse tdm:", nrow(sparsetdm)))
   
-  Sys.setenv(NOAWT=0) # debugging?
+  print("Creating compressed dgTMatrix")
+  TmpX <- as(as.matrix(sparsetdm), "dgTMatrix")
   
-  
-  #create sparse matrix in triplet form
-  
-  ncol(sparsedtm)
-  nrow(sparsedtm)
-  TmpX <- as(as.matrix(sparsedtm), "dgTMatrix")
-  TmpX[1:12, 1:10]
+  print("Creating X3col matrix")
   X3col <- matrix(c(TmpX@i+1, TmpX@j+1, TmpX@x), ncol = 3) # +1 because dgTMatrix starts indexing at 0
+  
+  print("Ordering X3col by column 1, then by column 2")
   X3col <- X3col[order(X3col[,1], X3col[,2], decreasing=FALSE),] #order dgTMatrix by 1st then 2nd columns, ascending
   
+  gc() #collect garbage
+  return(X3col)
 }
 
 
@@ -359,13 +398,13 @@ fitmodel <-function(speechdata){
   sparsemat <- list(data=X3col, rownames(sparsedtm), as.character(c(1:20000))) #create list object required by EMDynMultiMix
   
   #===== Save/load objects for EMDynMultMix
-  save(sparsemat, file="/Users/Paul/ThesisData/SparseTermDocumentMatrixObject.robject")
-  save(speechdates, file="/Users/Paul/ThesisData/SpeechDates.robject")
-  save(datenames, file="/Users/Paul/ThesisData/DateNames.robject")
+  #save(sparsemat, file="/Users/Paul/ThesisData/SparseTermDocumentMatrixObject.robject")
+  #save(speechdates, file="/Users/Paul/ThesisData/SpeechDates.robject")
+  #save(datenames, file="/Users/Paul/ThesisData/DateNames.robject")
   
-  load(file="/Users/Paul/ThesisData/SparseTermDocumentMatrixObject.robject")
-  load(file="/Users/Paul/ThesisData/SpeechDates.robject")
-  load(file="/Users/Paul/ThesisData/DateNames.robject")
+  #load(file="/Users/Paul/ThesisData/SparseTermDocumentMatrixObject.robject")
+  #load(file="/Users/Paul/ThesisData/SpeechDates.robject")
+  #load(file="/Users/Paul/ThesisData/DateNames.robject")
   
   
   #this one crashes
@@ -377,8 +416,7 @@ fitmodel <-function(speechdata){
                       V00=10)
   
   #this one works
-  out <- EMDynMultMix(sparsemat, timevec=speechdates, time.names=datenames, kernwidth=250, nclust=30, EMmaxiter=100,
-                      EMtol=1e-5, theta.start=NA, pi.start=NA,
+  out <- EMDynMultMix(sparsemat, timevec=speechdates, time.names=datenames, kernwidth=250, nclust=30, EMmaxiter=100,EMtol=1e-5, theta.start=NA, pi.start=NA,
                       clustprobs.start=NA, priorcount=1.0,
                       lazythresh=0.99, fullEMiter=1, initfullEMiter=1,
                       aaa=1.0, bbb=1.0, ccc=1.0, ddd=1.0, C0=100,
