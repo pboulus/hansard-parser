@@ -1,3 +1,6 @@
+# ===== PAUL BOULUS - THESIS 2013
+# 20130801
+
 # ********** AMAZON VERSION **********
 
 #Set up Amazon EC2 instance to run thesis data
@@ -22,8 +25,8 @@ setwd("/Users/Paul/Dropbox/ANU/Thesis/RProjects/ExtractSpeeches/") #for local
 # setwd("/thesis") #for amazon
 
 # Directory to store data relevant for this iteration
-options$data.dir <- "/Users/Paul/ThesisData/test/"
-options$source.dir <- "/thesis/Sources/"
+options$data.dir <- "/Users/Paul/ThesisData/20130731/"
+options$source.dir <- "/Users/Paul/ThesisData/Sources/"
 
 #Is install required?
 options$install.required <- FALSE #If install is required, set this to TRUE
